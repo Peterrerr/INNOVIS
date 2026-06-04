@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+.env
+delivery/
+
+# Editor / tooling
+.claude/
+.vscode/
+
+# Build artifacts
+dist/
+build/
+*.spec.bak
+.pytest_cache/
+
+# Large model weights (e.g. YOLO)
+*.pt
+
+logs/
+captures/
+config/settings.json
+config/sticker_reference.png
