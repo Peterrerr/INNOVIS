@@ -10,6 +10,7 @@ not have to manage files in the common case.
 from __future__ import annotations
 
 import os
+from collections import deque
 from typing import Dict, Optional
 
 import cv2
@@ -70,6 +71,9 @@ class DefectWidget(QWidget):
         self._detector = DefectDetector()
         self._current_frame: Optional[np.ndarray] = None
         self._last_results: Dict[str, tuple] = {}
+        # Rolling buffer of recent frames — median across the buffer cancels
+        # per-frame noise and auto-exposure flicker (cases A and C).
+        self._frame_buffer: deque = deque(maxlen=7)
         self._label_buttons: Dict[str, QPushButton] = {}
 
         # Each camera trains its own defect model under config/defect_models/<cam>/.
@@ -96,6 +100,7 @@ class DefectWidget(QWidget):
         if frame is None or frame.size == 0:
             return
         self._current_frame = frame.copy()
+        self._frame_buffer.append(frame.copy())
 
     def capture_and_inspect(self) -> None:
         """Run inspection on the currently stored frame and update the UI."""
@@ -103,7 +108,16 @@ class DefectWidget(QWidget):
             self._toast("No camera frame yet — press START CAMERA first.")
             return
 
-        status, defects, conf, result = self._detector.process(self._current_frame)
+        # Use pixel-wise median across the rolling buffer when enough frames
+        # have accumulated. The median collapses flicker from auto-exposure and
+        # per-frame sensor noise (cases A and C) without blurring real defects.
+        if len(self._frame_buffer) >= 3:
+            stack = np.stack(list(self._frame_buffer), axis=0)
+            inspect_frame = np.median(stack, axis=0).astype(np.uint8)
+        else:
+            inspect_frame = self._current_frame
+
+        status, defects, conf, result = self._detector.process(inspect_frame)
         self._last_results[self._detector.active_angle()] = (status, defects, conf)
         self._refresh_results_table()
         self._refresh_last_result_banner(status, defects, conf)

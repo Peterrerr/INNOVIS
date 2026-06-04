@@ -146,11 +146,11 @@ class DefectDetector:
 
         pack = self._angles[self._active]
         variants = [roi_bgr]
-        variants.append(cv2.flip(roi_bgr, 1))   # horizontal flip
-        variants.append(cv2.flip(roi_bgr, 0))   # vertical flip
-        # Brightness shift — alternate per sample for diversity without RNG state.
-        delta = 20 if (len(pack.samples_y) % 2 == 0) else -20
-        variants.append(self._adjust_brightness(roi_bgr, delta))
+        variants.append(cv2.flip(roi_bgr, 1))          # horizontal flip
+        variants.append(cv2.flip(roi_bgr, 0))          # vertical flip
+        # Two brightness variants (±40) so the SVM is robust to lighting drift.
+        variants.append(self._adjust_brightness(roi_bgr, 40))
+        variants.append(self._adjust_brightness(roi_bgr, -40))
 
         for v in variants:
             feat = self._hog_features(v)
@@ -555,14 +555,21 @@ class DefectDetector:
         thr_val = max(5, min(254, thr_val))
         _, mask = cv2.threshold(diff, thr_val, 255, cv2.THRESH_BINARY)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        # Small kernel for open (erases noise specks ≤ ~5px) but preserves
+        # real defect regions. Larger kernel for close (fills gaps inside a
+        # defect so it appears as one solid region).
+        open_k  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        close_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  open_k,  iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_k, iterations=2)
 
         num, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
         boxes: List[Tuple[int, int, int, int]] = []
         h_img, w_img = mask.shape[:2]
-        min_area = max(80, int(0.0005 * h_img * w_img))
+        # Require each anomaly region to be at least 0.08 % of the ROI area
+        # (≈ 16×16 px for a 640×480 crop). Tiny noise specks are ignored while
+        # real surface defects (scratch/stain ≥ a few mm) still pass through.
+        min_area = max(200, int(0.0008 * h_img * w_img))
         for i in range(1, num):
             x = int(stats[i, cv2.CC_STAT_LEFT])
             y = int(stats[i, cv2.CC_STAT_TOP])
