@@ -533,10 +533,20 @@ class DefectDetector:
         g_tmpl = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
 
         # Blur both sides equally to suppress lighting / sensor noise.
-        g_aligned_b = cv2.GaussianBlur(g_aligned, (5, 5), 0)
-        g_tmpl_b = cv2.GaussianBlur(g_tmpl, (5, 5), 0)
+        g_aligned_b = cv2.GaussianBlur(g_aligned, (5, 5), 0).astype(np.float32)
+        g_tmpl_b = cv2.GaussianBlur(g_tmpl, (5, 5), 0).astype(np.float32)
+
+        # Illumination normalization: match the live frame's brightness AND
+        # contrast to the template before differencing. This cancels global
+        # lighting changes (brighter/darker/contrast) so a good part is not
+        # flagged just because the lighting drifted from when the template was
+        # captured. Only genuine structural differences survive.
+        ma, sa = float(g_aligned_b.mean()), float(g_aligned_b.std()) + 1e-6
+        mt, st = float(g_tmpl_b.mean()), float(g_tmpl_b.std()) + 1e-6
+        g_aligned_b = (g_aligned_b - ma) * (st / sa) + mt
 
         diff = cv2.absdiff(g_aligned_b, g_tmpl_b)
+        diff = np.clip(diff, 0, 255).astype(np.uint8)
 
         # Sensitivity = 1.0 → very low threshold (catch everything).
         # Sensitivity = 0.0 → very high threshold (catch only severe diffs).
